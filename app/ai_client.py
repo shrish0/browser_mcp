@@ -1,6 +1,7 @@
+import json
 import logging
 import time
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from openai import OpenAI
 
@@ -70,9 +71,19 @@ def _parse_response(response: Any) -> str:
     return _safe_text(getattr(first_choice, "text", None))
 
 
-def build_payload(model: str, question: str, context: str, max_tokens: int) -> Dict[str, Any]:
+def build_payload(
+    model: str,
+    question: Union[str, List[str]],
+    context: str,
+    max_tokens: int,
+) -> Dict[str, Any]:
     prompt_key = MODEL_CONFIG.get(model, "default")
-    prompt = prompts.get(prompt_key, prompts["default"])
+    batch_key = f"batch_{prompt_key}"
+
+    if isinstance(question, list):
+        prompt = prompts.get(batch_key, prompts["batch_default"])
+    else:
+        prompt = prompts.get(prompt_key, prompts["default"])
 
     system_prompt = prompt["system"](question, context)
     user_prompt = prompt["user"](question, context)
@@ -84,6 +95,45 @@ def build_payload(model: str, question: str, context: str, max_tokens: int) -> D
         ],
         "max_tokens": max_tokens,
     }
+
+
+def batch_questions(questions: List[str], batch_size: int = 10) -> List[List[str]]:
+    if batch_size < 1:
+        batch_size = 1
+    batch_size = min(batch_size, 20)
+    return [questions[i : i + batch_size] for i in range(0, len(questions), batch_size)]
+
+
+def _parse_batch_response(response: Any, questions: List[str]) -> List[Dict[str, str]]:
+    raw_text = _parse_response(response)
+    try:
+        parsed = json.loads(raw_text)
+    except Exception:
+        logger.warning("Batch response is not valid JSON")
+        return [{"question": q, "answer": "Not found in context"} for q in questions]
+
+    if not isinstance(parsed, dict):
+        logger.warning("Batch response JSON is not an object")
+        return [{"question": q, "answer": "Not found in context"} for q in questions]
+
+    answers = parsed.get("answers")
+    if not isinstance(answers, list):
+        logger.warning("Batch response JSON missing answers list")
+        return [{"question": q, "answer": "Not found in context"} for q in questions]
+
+    mapping: Dict[str, str] = {}
+    for item in answers:
+        if not isinstance(item, dict):
+            continue
+        question_text = item.get("question")
+        answer_text = _safe_text(item.get("answer") if isinstance(item.get("answer"), str) else None)
+        if isinstance(question_text, str):
+            mapping[question_text] = answer_text
+
+    return [
+        {"question": q, "answer": mapping.get(q, "Not found in context")}
+        for q in questions
+    ]
 
 
 class AIClient:
@@ -132,23 +182,29 @@ class AIClient:
         if state:
             state.record_failure(self.CIRCUIT_BREAKER_THRESHOLD, self.CIRCUIT_BREAKER_RESET_SECONDS)
 
-    def _call_model(self, model: str, question: str, context: str, max_tokens: int) -> Optional[str]:
+    def _call_model_batch(
+        self,
+        model: str,
+        questions: List[str],
+        context: str,
+        max_tokens: int,
+    ) -> Optional[List[Dict[str, str]]]:
         if self._is_model_disabled(model):
             logger.warning("Model %s is temporarily disabled by circuit breaker", model)
             return None
 
-        payload = build_payload(model, question, context, max_tokens)
+        payload = build_payload(model, questions, context, max_tokens)
         attempts = 0
         last_exception: Optional[Exception] = None
 
         while attempts <= self.max_retries:
             attempts += 1
             try:
-                logger.info("AI request attempt %d for model %s", attempts, model)
+                logger.info("Batch AI request attempt %d for model %s", attempts, model)
                 logger.debug(
-                    "Model %s request details: question_length=%d, context_length=%d",
+                    "Batch model %s request details: batch_size=%d, context_length=%d",
                     model,
-                    len(question),
+                    len(questions),
                     len(context),
                 )
                 response = self.client.chat.completions.create(
@@ -157,30 +213,29 @@ class AIClient:
                     timeout=self.request_timeout,
                     **payload,
                 )
-                result = _parse_response(response)
-                if not result or result == "Not found in context":
-                    raise ValueError("Empty or invalid model response")
+                result = _parse_batch_response(response, questions)
+                if not result:
+                    raise ValueError("Empty or invalid batch model response")
                 self._mark_success(model)
                 return result
             except Exception as exc:
                 last_exception = exc
-                logger.warning("Model %s attempt %d failed: %s", model, attempts, exc)
+                logger.warning("Batch model %s attempt %d failed: %s", model, attempts, exc)
                 if attempts > self.max_retries:
-                    logger.exception("Model %s failed after %d attempts", model, attempts)
+                    logger.exception("Batch model %s failed after %d attempts", model, attempts)
                     self._mark_failure(model)
                 else:
-                    logger.info("Retrying model %s (attempt %d)", model, attempts + 1)
+                    logger.info("Retrying batch model %s (attempt %d)", model, attempts + 1)
 
-        logger.debug("Last exception for model %s: %s", model, last_exception)
+        logger.debug("Last batch exception for model %s: %s", model, last_exception)
         return None
 
-    def get_summary(
+    def _call_model_batch_with_fallback(
         self,
-        question: str,
+        questions: List[str],
         context: str,
-        max_tokens: int = 500,
-        return_model: bool = False,
-    ) -> Union[str, Tuple[str, str]]:
+        max_tokens: int,
+    ) -> Tuple[List[Dict[str, str]], str]:
         models_to_try = [self.primary_model]
         if self.fallback_model != self.primary_model:
             models_to_try.append(self.fallback_model)
@@ -190,12 +245,46 @@ class AIClient:
                 logger.warning("Skipping disabled model %s", model)
                 continue
 
-            result = self._call_model(model, question, context, max_tokens)
+            result = self._call_model_batch(model, questions, context, max_tokens)
             if result is not None:
-                return (result, model) if return_model else result
+                return result, model
 
-        err_msg = "AI summarization failed"
-        return (err_msg, "none") if return_model else err_msg
+        fallback = [{"question": q, "answer": "Not found in context"} for q in questions]
+        return fallback, "none"
+
+    def answer_questions(
+        self,
+        questions: List[str],
+        context: str,
+        max_tokens: int = 500,
+        batch_size: int = 10,
+        delay_seconds: float = 0.3,
+    ) -> Tuple[List[Dict[str, str]], Dict[str, str]]:
+        batched = batch_questions(questions, batch_size)
+        answers: List[Dict[str, str]] = []
+        model_map: Dict[str, str] = {}
+
+        for batch_index, batch in enumerate(batched, start=1):
+            start_time = time.monotonic()
+            batch_result, model = self._call_model_batch_with_fallback(batch, context, max_tokens)
+            elapsed = time.monotonic() - start_time
+            logger.info(
+                "Processed batch %d/%d with %d questions on model %s in %.2f seconds",
+                batch_index,
+                len(batched),
+                len(batch),
+                model,
+                elapsed,
+            )
+
+            for entry in batch_result:
+                answers.append(entry)
+                model_map[entry["question"]] = model
+
+            if batch_index < len(batched) and delay_seconds > 0:
+                time.sleep(delay_seconds)
+
+        return answers, model_map
 
 
 def get_ai_client(model: Optional[str] = None) -> AIClient:

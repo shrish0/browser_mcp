@@ -114,24 +114,16 @@ def browse_webpage(request: BrowseRequest):
             logger.info(f"Step 4: Answering {len(request.questions)} specific questions")
             response_data["ai_answers"] = {}
             response_data["answer_models"] = {}
-            for q in request.questions:
-                try:
-                    logger.info(f"Step 4.1: Answering question - {q}")
-                    summary_data = ai_client.get_summary(
-                        question=q,
-                        context=prepared_context,
-                        return_model=True
-                    )
-                    if isinstance(summary_data, tuple):
-                        ans, model = summary_data
-                    else:
-                        ans, model = summary_data, None
-                    
-                    response_data["ai_answers"][q] = ans
-                    response_data["answer_models"][q] = model
-                except Exception:
-                    logger.exception("AI question answering failed for question: %s", q)
-                    response_data["ai_answers"][q] = "AI failed to answer this question"
+            answers, model_map = ai_client.answer_questions(
+                request.questions,
+                prepared_context,
+                max_tokens=500,
+                batch_size=10,
+                delay_seconds=0.3,
+            )
+            for entry in answers:
+                response_data["ai_answers"][entry["question"]] = entry["answer"]
+                response_data["answer_models"][entry["question"]] = model_map.get(entry["question"], "none")
 
         return BrowseResponse(**response_data)
 
