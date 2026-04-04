@@ -20,22 +20,66 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 1. Workflow Rule Enforcement
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install PyYAML ruff fastapi pydantic uvicorn
+
+      - name: 1. Workflow Rule Enforcement (Dynamic)
+        shell: bash
         run: |
-          echo "Checking branch naming..."
+          echo "Reading configuration from validation.yaml..."
+          
+          # Use Python to read the YAML config
+          BRANCH_CONFIG=$(python3 -c "
+          import yaml, sys
+          try:
+              with open('validation.yaml') as f:
+                  data = yaml.safe_load(f)
+                  rules = data.get('workflow_rules', {}).get('branch_naming', {})
+                  enabled = rules.get('enabled', True)
+                  patterns = rules.get('patterns', [])
+                  print(f\"{enabled}|{'|'.join(patterns)}\")
+          except Exception as e:
+              print(f\"true|^.*$\")
+          " 2>/dev/null)
+
+          ENABLED=$(echo $BRANCH_CONFIG | cut -d'|' -f1)
+          PATTERNS=$(echo $BRANCH_CONFIG | cut -d'|' -f2-)
+
           SOURCE_BRANCH="${{ github.head_ref }}"
+
+          # Always block main/master
           if [[ "$SOURCE_BRANCH" == "main" || "$SOURCE_BRANCH" == "master" ]]; then
             echo "::error::PRs from 'main' or 'master' are strictly prohibited."
             exit 1
           fi
 
-          PATTERN="^(feature|fix|chore|refactor)\/.*$"
-          if [[ ! "$SOURCE_BRANCH" =~ $PATTERN ]]; then
-            echo "::error::Invalid branch name: '$SOURCE_BRANCH'. Branch MUST follow: feature/, fix/, chore/, or refactor/"
-            exit 1
+          # Check naming if enabled
+          if [[ "${ENABLED,,}" == "true" ]]; then
+            echo "Enforcing branch naming rules..."
+            MATCH=false
+            IFS='|' read -ra PATTERN_ARR <<< "$PATTERNS"
+            for PATTERN in "${PATTERN_ARR[@]}"; do
+              if [[ "$SOURCE_BRANCH" =~ $PATTERN ]]; then
+                MATCH=true
+                break
+              fi
+            done
+
+            if [ "$MATCH" = false ]; then
+              echo "::error::Invalid branch name: '$SOURCE_BRANCH'. It does not match patterns in validation.yaml"
+              exit 1
+            fi
+          else
+            echo "Branch naming enforcement is DISABLED in validation.yaml."
           fi
 
-          echo "Checking PR content..."
+          # Check PR content
           if [[ -z "${{ github.event.pull_request.title }}" ]]; then
             echo "::error::PR title is missing."
             exit 1
@@ -45,16 +89,8 @@ jobs:
             exit 1
           fi
 
-      - name: 2. Setup Python environment
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: 3. Requirements and Dependencies
+      - name: 2. Requirements Check
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install ruff fastapi pydantic uvicorn
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f app/requirements.txt ]; then pip install -r app/requirements.txt; fi
 
