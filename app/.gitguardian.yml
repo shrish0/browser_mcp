@@ -1,0 +1,16 @@
+# GitGuardian Configuration
+# https://docs.gitguardian.com/ggshield-docs/configuration
+
+# Paths to ignore during secret scanning
+paths-ignore:
+  - .env
+  - .env.example
+  - .github/workflows/ci.yml
+  - requirements*.txt
+  - pyrightconfig.json
+
+# Exit with non-zero code if secrets are found
+exit-zero: false
+
+# Verbosity level
+verbose: false

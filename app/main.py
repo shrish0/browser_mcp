@@ -23,7 +23,7 @@ app = FastAPI(title=settings.APP_NAME, version="1.0.0", debug=settings.DEBUG)
 
 web_scraper = WebScraper()
 
-# Initialize AI client (singleton) at startup
+# Initialize AI client (singleton) at startup - may be None if API key not set
 ai_client = get_ai_client()
 
 
@@ -86,27 +86,31 @@ def browse_webpage(request: BrowseRequest):
             len(result.get("paragraphs", [])) if isinstance(result, dict) else 0,
         )
         try:
-            logger.info("Step 3: Generating AI summary for paragraphs")
-            summary_data = ai_client.get_summary(
-                question="Summarize the main content of this webpage concisely.",
-                context=prepared_context,
-                max_tokens=300,
-                return_model=True,  # We need a way to get the model used
-            )
-            if isinstance(summary_data, tuple):
-                summary, model = summary_data
-            else:
-                summary, model = summary_data, None
-
-            if summary and summary != "AI summarization failed":
-                response_data["paragraphs"] = [summary]
-                response_data["model_used"] = model
-                logger.info(
-                    "Successfully summarized paragraphs with AI using %s", model
-                )
-            else:
+            if ai_client is None:
+                logger.warning("AI client not available, using raw paragraphs")
                 response_data["paragraphs"] = result["paragraphs"]
-                logger.warning("AI summary failed, using raw paragraphs")
+            else:
+                logger.info("Step 3: Generating AI summary for paragraphs")
+                summary_data = ai_client.get_summary(
+                    question="Summarize the main content of this webpage concisely.",
+                    context=prepared_context,
+                    max_tokens=300,
+                    return_model=True,  # We need a way to get the model used
+                )
+                if isinstance(summary_data, tuple):
+                    summary, model = summary_data
+                else:
+                    summary, model = summary_data, None
+
+                if summary and summary != "AI summarization failed":
+                    response_data["paragraphs"] = [summary]
+                    response_data["model_used"] = model
+                    logger.info(
+                        "Successfully summarized paragraphs with AI using %s", model
+                    )
+                else:
+                    response_data["paragraphs"] = result["paragraphs"]
+                    logger.warning("AI summary failed, using raw paragraphs")
         except Exception:
             logger.exception(
                 "AI paragraph summarization failed, falling back to raw paragraphs"
@@ -115,6 +119,12 @@ def browse_webpage(request: BrowseRequest):
 
         # Handle specific questions if provided
         if request.questions:
+            if ai_client is None:
+                logger.warning("AI client not available, cannot answer questions")
+                raise HTTPException(
+                    status_code=400,
+                    detail="AI features require OPENROUTER_API_KEY to be set in environment",
+                )
             logger.info(
                 f"Step 4: Answering {len(request.questions)} specific questions"
             )

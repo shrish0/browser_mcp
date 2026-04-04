@@ -1,0 +1,141 @@
+name: PR Validation System
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install PyYAML ruff fastapi pydantic uvicorn
+
+      - name: 1. Workflow Rule Enforcement (Dynamic)
+        shell: bash
+        run: |
+          echo "Reading configuration from validation.yaml..."
+          
+          # Use Python to read the YAML config
+          BRANCH_CONFIG=$(python3 -c "
+          import yaml, sys
+          try:
+              with open('validation.yaml') as f:
+                  data = yaml.safe_load(f)
+                  rules = data.get('workflow_rules', {}).get('branch_naming', {})
+                  enabled = rules.get('enabled', True)
+                  patterns = rules.get('patterns', [])
+                  print(f\"{enabled}|{'|'.join(patterns)}\")
+          except Exception as e:
+              print(f\"true|^.*$\")
+          " 2>/dev/null)
+
+          ENABLED=$(echo $BRANCH_CONFIG | cut -d'|' -f1)
+          PATTERNS=$(echo $BRANCH_CONFIG | cut -d'|' -f2-)
+
+          SOURCE_BRANCH="${{ github.head_ref }}"
+
+          # Always block main/master
+          if [[ "$SOURCE_BRANCH" == "main" || "$SOURCE_BRANCH" == "master" ]]; then
+            echo "::error::PRs from 'main' or 'master' are strictly prohibited."
+            exit 1
+          fi
+
+          # Check naming if enabled
+          if [[ "${ENABLED,,}" == "true" ]]; then
+            echo "Enforcing branch naming rules..."
+            MATCH=false
+            IFS='|' read -ra PATTERN_ARR <<< "$PATTERNS"
+            for PATTERN in "${PATTERN_ARR[@]}"; do
+              if [[ "$SOURCE_BRANCH" =~ $PATTERN ]]; then
+                MATCH=true
+                break
+              fi
+            done
+
+            if [ "$MATCH" = false ]; then
+              echo "::error::Invalid branch name: '$SOURCE_BRANCH'. It does not match patterns in validation.yaml"
+              exit 1
+            fi
+          else
+            echo "Branch naming enforcement is DISABLED in validation.yaml."
+          fi
+
+          # Check PR content
+          if [[ -z "${{ github.event.pull_request.title }}" ]]; then
+            echo "::error::PR title is missing."
+            exit 1
+          fi
+          if [[ -z "${{ github.event.pull_request.body }}" ]]; then
+            echo "::error::PR description is missing."
+            exit 1
+          fi
+
+      - name: 2. Requirements Check
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f app/requirements.txt ]; then pip install -r app/requirements.txt; fi
+
+      - name: 4. Ruff Linting (Strict Checks)
+        run: |
+          echo "Running Ruff checks..."
+          # Fail on critical errors
+          ruff check . --select F401,F821,E9 || exit 1
+          # Warn on line length (no exit 1)
+          ruff check . --select E501 || true
+
+      - name: 5. Render Deployment Readiness
+        run: |
+          echo "Validating project structure for Render..."
+          if [[ ! -f "requirements.txt" && ! -f "pyproject.toml" && ! -f "app/requirements.txt" ]]; then
+            echo "::error::Application is NOT deployable: requirements.txt or pyproject.toml is missing."
+            exit 1
+          fi
+
+          if [[ ! -f "app/main.py" && ! -f "main.py" && ! -f "app/app.py" && ! -f "app.py" ]]; then
+            echo "::error::Application entrypoint (main.py or app.py) NOT found."
+            exit 1
+          fi
+
+          echo "Checking for FastAPI app instance..."
+          grep -rn "app = FastAPI(" . || { echo "::error::FastAPI instance 'app = FastAPI()' not found."; exit 1; }
+
+      - name: 6. Security Analysis (Secret Scanning)
+        run: |
+          echo "Scanning for hardcoded secrets..."
+          # Check for sk- prefixed tokens (OpenAI etc), AWS keys, and generic SECRET_KEY assignments
+          GREP_FLAGS="-rniE"
+          PATTERNS="(sk-[a-zA-Z0-9]{20,}|SECRET_KEY\s*=\s*['\"].*['\"]|API_KEY\s*=\s*['\"].*['\"]|PASSWORD\s*=\s*['\"].*['\"])"
+          
+          # Exclude common false positives (tests, .env examples)
+          if grep $GREP_FLAGS "$PATTERNS" . --exclude-dir={.git,.venv,venv,tests} --exclude={example.env,.env.example,*.md}; then
+            echo "::error::Hardcoded Secrets Detected! Remove them immediately and use Environment Variables."
+            exit 1
+          fi
+
+      - name: 7. Startup Check (Dry Run)
+        run: |
+          echo "Verifying application startup..."
+          # Attempt to import the app without running it (checks for syntax/import errors)
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          # Try to locate the main.py and import it
+          if [ -d "app" ]; then cd app; fi
+          python -c "from main import app; print('Startup Check: SUCCESS')" || { echo "::error::Application failed to initialize."; exit 1; }

@@ -39,7 +39,7 @@ class WebScraper:
                 logger.warning(f"Non-HTML content for {url}")
                 return None
 
-            soup = BeautifulSoup(response.text, "lxml")
+            soup = BeautifulSoup(response.text, "html.parser")
 
             # Remove scripts and styles
             for tag in soup(["script", "style"]):
@@ -88,7 +88,7 @@ class WebScraper:
                 content = page.content()
                 browser.close()
 
-            soup = BeautifulSoup(content, "lxml")
+            soup = BeautifulSoup(content, "html.parser")
 
             # Remove scripts and styles
             for tag in soup(["script", "style"]):

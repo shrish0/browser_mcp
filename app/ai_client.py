@@ -301,10 +301,13 @@ class AIClient:
         return answers, model_map
 
 
-def get_ai_client(model: Optional[str] = None) -> AIClient:
+def get_ai_client(model: Optional[str] = None) -> Optional[AIClient]:
     settings = get_settings()
     if not settings.OPENROUTER_API_KEY:
-        raise ValueError("OPENROUTER_API_KEY not set in environment")
+        logger.warning(
+            "OPENROUTER_API_KEY not set in environment, AI features will be disabled"
+        )
+        return None
 
     key = model or settings.PRIMARY_MODEL
     if key not in _clients:
