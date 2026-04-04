@@ -1,19 +1,25 @@
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
-from utils import clean_text, extract_headings, extract_paragraphs, extract_metadata, requires_login
+from utils import (
+    clean_text,
+    extract_headings,
+    extract_paragraphs,
+    extract_metadata,
+    requires_login,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class WebScraper:
     def __init__(self):
-        self.user_agent = 'BrowserMCP/1.0 (https://github.com/your-repo/browser-mcp)'
+        self.user_agent = "BrowserMCP/1.0 (https://github.com/your-repo/browser-mcp)"
 
     def _validate_url(self, url: str) -> None:
         """Validate URL has scheme and netloc."""
@@ -25,22 +31,22 @@ class WebScraper:
         """Scrape webpage using static requests/BeautifulSoup."""
         try:
             logger.info(f"Starting static scrape for {url}")
-            headers = {'User-Agent': self.user_agent}
+            headers = {"User-Agent": self.user_agent}
             response = requests.get(url, headers=headers, timeout=10)
             response.raise_for_status()
 
-            if 'text/html' not in response.headers.get('content-type', '').lower():
+            if "text/html" not in response.headers.get("content-type", "").lower():
                 logger.warning(f"Non-HTML content for {url}")
                 return None
 
-            soup = BeautifulSoup(response.text, 'lxml')
+            soup = BeautifulSoup(response.text, "lxml")
 
             # Remove scripts and styles
-            for tag in soup(['script', 'style']):
+            for tag in soup(["script", "style"]):
                 tag.decompose()
 
             # Extract title
-            title = ''
+            title = ""
             if soup.title:
                 title = clean_text(soup.title.get_text())
 
@@ -50,15 +56,15 @@ class WebScraper:
             metadata = extract_metadata(soup)
 
             result = {
-                'title': title,
-                'headings': headings,
-                'paragraphs': paragraphs,
-                'metadata': metadata
+                "title": title,
+                "headings": headings,
+                "paragraphs": paragraphs,
+                "metadata": metadata,
             }
 
             if requires_login(result):
                 logger.info(f"Login required for {url}")
-                return {'requires_login': True}
+                return {"requires_login": True}
 
             logger.info(f"Static scrape successful for {url}")
             return result
@@ -77,19 +83,19 @@ class WebScraper:
             with sync_playwright() as p:
                 browser = p.chromium.launch()
                 page = browser.new_page()
-                page.goto(url, wait_until='networkidle', timeout=30000)
+                page.goto(url, wait_until="networkidle", timeout=30000)
                 page.wait_for_timeout(2000)  # Additional wait for content loading
                 content = page.content()
                 browser.close()
 
-            soup = BeautifulSoup(content, 'lxml')
+            soup = BeautifulSoup(content, "lxml")
 
             # Remove scripts and styles
-            for tag in soup(['script', 'style']):
+            for tag in soup(["script", "style"]):
                 tag.decompose()
 
             # Extract title
-            title = ''
+            title = ""
             if soup.title:
                 title = clean_text(soup.title.get_text())
 
@@ -99,15 +105,15 @@ class WebScraper:
             metadata = extract_metadata(soup)
 
             result = {
-                'title': title,
-                'headings': headings,
-                'paragraphs': paragraphs,
-                'metadata': metadata
+                "title": title,
+                "headings": headings,
+                "paragraphs": paragraphs,
+                "metadata": metadata,
             }
 
             if requires_login(result):
                 logger.info(f"Login required for {url}")
-                return {'requires_login': True}
+                return {"requires_login": True}
 
             logger.info(f"Dynamic scrape successful for {url}")
             return result

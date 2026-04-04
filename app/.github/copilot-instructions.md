@@ -18,6 +18,11 @@ Minimize friction per unit of output. Every action must increase speed, reduce c
 - Ignoring project structure
 - Overcomplicating solutions
 
+## Git Branching Rules
+- **Never work on the `main` or `master` branch directly.**
+- **Workflow**: If the current branch is `main` or `master`, the AI must **STOP** and ask the user to provide a name for a new feature branch (`feature/*`) to be created.
+- Ensure every logical change is committed on its own branch and then merged.
+
 ---
 
 # Browser MCP Server - AI Coding Guidelines

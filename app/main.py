@@ -1,6 +1,5 @@
 import logging
 from typing import Dict, List, Optional
-import traceback
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, HttpUrl
@@ -63,10 +62,10 @@ def browse_webpage(request: BrowseRequest):
             logger.error(f"Failed to scrape {request.url}")
             raise HTTPException(status_code=500, detail="Failed to scrape webpage")
 
-        if isinstance(result, dict) and result.get('requires_login'):
+        if isinstance(result, dict) and result.get("requires_login"):
             return BrowseResponse(
                 url=str(request.url),
-                error="This site requires login so can't summarize it"
+                error="This site requires login so can't summarize it",
             )
 
         response_data = {
@@ -80,13 +79,19 @@ def browse_webpage(request: BrowseRequest):
         # Summarize paragraphs if possible, else use raw paragraphs
         logger.info("Step 2: Preparing context for AI summarization")
         prepared_context = prepare_for_ai_summarization(result)
+        logger.debug(
+            "Step 2: Prepared context for AI summarization (length=%d chars, headings=%d, paragraphs=%d)",
+            len(prepared_context),
+            len(result.get("headings", [])) if isinstance(result, dict) else 0,
+            len(result.get("paragraphs", [])) if isinstance(result, dict) else 0,
+        )
         try:
             logger.info("Step 3: Generating AI summary for paragraphs")
             summary_data = ai_client.get_summary(
                 question="Summarize the main content of this webpage concisely.",
                 context=prepared_context,
                 max_tokens=300,
-                return_model=True  # We need a way to get the model used
+                return_model=True,  # We need a way to get the model used
             )
             if isinstance(summary_data, tuple):
                 summary, model = summary_data
@@ -96,37 +101,37 @@ def browse_webpage(request: BrowseRequest):
             if summary and summary != "AI summarization failed":
                 response_data["paragraphs"] = [summary]
                 response_data["model_used"] = model
-                logger.info("Successfully summarized paragraphs with AI using %s", model)
+                logger.info(
+                    "Successfully summarized paragraphs with AI using %s", model
+                )
             else:
-                 response_data["paragraphs"] = result["paragraphs"]
-                 logger.warning("AI summary failed, using raw paragraphs")
+                response_data["paragraphs"] = result["paragraphs"]
+                logger.warning("AI summary failed, using raw paragraphs")
         except Exception:
-            logger.exception("AI paragraph summarization failed, falling back to raw paragraphs")
+            logger.exception(
+                "AI paragraph summarization failed, falling back to raw paragraphs"
+            )
             response_data["paragraphs"] = result["paragraphs"]
 
         # Handle specific questions if provided
         if request.questions:
-            logger.info(f"Step 4: Answering {len(request.questions)} specific questions")
+            logger.info(
+                f"Step 4: Answering {len(request.questions)} specific questions"
+            )
             response_data["ai_answers"] = {}
             response_data["answer_models"] = {}
-            for q in request.questions:
-                try:
-                    logger.info(f"Step 4.1: Answering question - {q}")
-                    summary_data = ai_client.get_summary(
-                        question=q,
-                        context=prepared_context,
-                        return_model=True
-                    )
-                    if isinstance(summary_data, tuple):
-                        ans, model = summary_data
-                    else:
-                        ans, model = summary_data, None
-                    
-                    response_data["ai_answers"][q] = ans
-                    response_data["answer_models"][q] = model
-                except Exception:
-                    logger.exception("AI question answering failed for question: %s", q)
-                    response_data["ai_answers"][q] = "AI failed to answer this question"
+            answers, model_map = ai_client.answer_questions(
+                request.questions,
+                prepared_context,
+                max_tokens=500,
+                batch_size=10,
+                delay_seconds=0.3,
+            )
+            for entry in answers:
+                response_data["ai_answers"][entry["question"]] = entry["answer"]
+                response_data["answer_models"][entry["question"]] = model_map.get(
+                    entry["question"], "none"
+                )
 
         return BrowseResponse(**response_data)
 
@@ -135,6 +140,4 @@ def browse_webpage(request: BrowseRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.info(f"FLOW FAILED: {str(e)}")
-
-
-        raise HTTPException(status_code=500, detail=f"Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error")
