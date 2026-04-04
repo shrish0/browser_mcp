@@ -4,10 +4,9 @@ fastapi==0.104.0
 uvicorn[standard]==0.24.0
 
 # --- Web Scraping & Content Processing ---
-# Standard requests, HTML parsing, and XML support for scraping static pages
+# Standard requests and HTML parsing for scraping static pages
 requests==2.31.0
 beautifulsoup4==4.12.0
-lxml==4.9.0
 
 # --- Browser Automation ---
 # Used for scraping dynamic JS-rendered pages
@@ -15,7 +14,7 @@ playwright==1.40.0
 
 # --- Data Validation & Configuration ---
 # Ensures strict data models and secure environment variable management
-pydantic==2.5.0
+pydantic==2.7.0
 pydantic-settings==2.5.0
 
 # --- AI Integration ---
