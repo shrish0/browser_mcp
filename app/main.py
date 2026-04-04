@@ -1,6 +1,5 @@
 import logging
 from typing import Dict, List, Optional
-import traceback
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, HttpUrl
@@ -80,6 +79,12 @@ def browse_webpage(request: BrowseRequest):
         # Summarize paragraphs if possible, else use raw paragraphs
         logger.info("Step 2: Preparing context for AI summarization")
         prepared_context = prepare_for_ai_summarization(result)
+        logger.debug(
+            "Step 2: Prepared context for AI summarization (length=%d chars, headings=%d, paragraphs=%d)",
+            len(prepared_context),
+            len(result.get("headings", [])) if isinstance(result, dict) else 0,
+            len(result.get("paragraphs", [])) if isinstance(result, dict) else 0,
+        )
         try:
             logger.info("Step 3: Generating AI summary for paragraphs")
             summary_data = ai_client.get_summary(
