@@ -1,0 +1,22 @@
+# --- FastAPI / Web Server ---
+# Core framework for building the API and running the server
+fastapi==0.104.0
+uvicorn[standard]==0.24.0
+
+# --- Web Scraping & Content Processing ---
+# Standard requests and HTML parsing for scraping static pages
+requests==2.31.0
+beautifulsoup4==4.12.0
+
+# --- Browser Automation ---
+# Used for scraping dynamic JS-rendered pages
+playwright==1.40.0
+
+# --- Data Validation & Configuration ---
+# Ensures strict data models and secure environment variable management
+pydantic==2.7.0
+pydantic-settings==2.5.0
+
+# --- AI Integration ---
+# Integration with Large Language Models for summarization and QA
+openai==1.0.0
