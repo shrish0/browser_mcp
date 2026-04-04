@@ -2,6 +2,7 @@ import logging
 from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, HttpUrl
 
 from ai_client import get_ai_client
@@ -49,6 +50,12 @@ class BrowseResponse(BaseModel):
 def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+@app.get("/", include_in_schema=False)
+def root_redirect():
+    """Redirect the root path to API docs."""
+    return RedirectResponse(url="/docs")
 
 
 @app.post("/browse", response_model=BrowseResponse)
