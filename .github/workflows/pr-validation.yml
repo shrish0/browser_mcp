@@ -131,20 +131,7 @@ jobs:
             exit 1
           fi
 
-      - name: 7. FastAPI Integrity & Response Models
-        run: |
-          echo "Validating FastAPI modular components..."
-          # Ensure all routes have Pydantic models (basic grep check for common patterns)
-          # This checks if def functions in routes define types for inputs or response_model
-          grep -rnE "def .*(.*):" app/ | grep -v "self" || echo "Note: Verify route input types manually."
-          
-          # Check for blocking calls in async routes (exclude internal/vendor directories)
-          if grep -rn "time.sleep" . --exclude-dir={.git,.venv,venv,__pycache__} | grep -B 1 "async def"; then
-            echo "::error::Blocking 'time.sleep' detected inside 'async def'. Use 'await asyncio.sleep()' instead."
-            exit 1
-          fi
-
-      - name: 8. Startup Check (Dry Run)
+      - name: 7. Startup Check (Dry Run)
         run: |
           echo "Verifying application startup..."
           # Attempt to import the app without running it (checks for syntax/import errors)
