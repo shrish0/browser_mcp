@@ -138,8 +138,8 @@ jobs:
           # This checks if def functions in routes define types for inputs or response_model
           grep -rnE "def .*(.*):" app/ | grep -v "self" || echo "Note: Verify route input types manually."
           
-          # Check for blocking calls in async routes (simple grep for time.sleep in async def)
-          if grep -rn "time.sleep" . | grep -B 1 "async def"; then
+          # Check for blocking calls in async routes (exclude internal/vendor directories)
+          if grep -rn "time.sleep" . --exclude-dir={.git,.venv,venv,__pycache__} | grep -B 1 "async def"; then
             echo "::error::Blocking 'time.sleep' detected inside 'async def'. Use 'await asyncio.sleep()' instead."
             exit 1
           fi
