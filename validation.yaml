@@ -6,7 +6,7 @@ project:
 
 workflow_rules:
   branch_naming:
-    enabled: true
+    enabled: false
     patterns:
       - "^feature\\/.*$"
       - "^fix\\/.*$"
