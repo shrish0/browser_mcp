@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     FALLBACK_MODEL: str = "openai/gpt-4o"
 
     # API Keys
-    OPENROUTER_API_KEY: str | None = None
+    OPENROUTER_API_KEY: str = "enter_your_openrouter_api_key_here"
     OPENROUTER_API_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENROUTER_HTTP_REFERER: str = ""
     OPENROUTER_TITLE: str = "Browser MCP"
