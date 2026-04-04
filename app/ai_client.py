@@ -264,6 +264,87 @@ class AIClient:
         ]
         return fallback, "none"
 
+    def _call_model(
+        self,
+        model: str,
+        question: str,
+        context: str,
+        max_tokens: int,
+    ) -> Optional[str]:
+        if self._is_model_disabled(model):
+            logger.warning("Model %s is temporarily disabled by circuit breaker", model)
+            return None
+
+        payload = build_payload(model, question, context, max_tokens)
+        attempts = 0
+        last_exception: Optional[Exception] = None
+
+        while attempts <= self.max_retries:
+            attempts += 1
+            try:
+                logger.info("AI request attempt %d for model %s", attempts, model)
+                logger.debug(
+                    "Model %s request details: question_length=%d, context_length=%d",
+                    model,
+                    len(question),
+                    len(context),
+                )
+                response = self.client.chat.completions.create(
+                    extra_headers=self._build_headers(),
+                    model=model,
+                    timeout=self.request_timeout,
+                    **payload,
+                )
+                result = _parse_response(response)
+                if not result:
+                    raise ValueError("Empty or invalid model response")
+                self._mark_success(model)
+                return result
+            except Exception as exc:
+                last_exception = exc
+                logger.warning("Model %s attempt %d failed: %s", model, attempts, exc)
+                if attempts > self.max_retries:
+                    logger.exception("Model %s failed after %d attempts", model, attempts)
+                    self._mark_failure(model)
+                else:
+                    logger.info("Retrying model %s (attempt %d)", model, attempts + 1)
+
+        logger.debug("Last exception for model %s: %s", model, last_exception)
+        return None
+
+    def _call_model_with_fallback(
+        self,
+        question: str,
+        context: str,
+        max_tokens: int,
+    ) -> Tuple[str, str]:
+        models_to_try = [self.primary_model]
+        if self.fallback_model != self.primary_model:
+            models_to_try.append(self.fallback_model)
+
+        for model in models_to_try:
+            if self._is_model_disabled(model):
+                logger.warning("Skipping disabled model %s", model)
+                continue
+
+            result = self._call_model(model, question, context, max_tokens)
+            if result is not None:
+                return result, model
+
+        return "AI summarization failed", "none"
+
+    def get_summary(
+        self,
+        question: str,
+        context: str,
+        max_tokens: int = 300,
+        return_model: bool = False,
+    ) -> Union[str, Tuple[str, str]]:
+        summary, model = self._call_model_with_fallback(question, context, max_tokens)
+        if return_model:
+            return summary, model
+        return summary
+
     def answer_questions(
         self,
         questions: List[str],
