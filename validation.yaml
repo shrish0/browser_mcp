@@ -8,10 +8,8 @@ workflow_rules:
   branch_naming:
     enabled: false
     patterns:
-      - "^feature\\/.*$"
-      - "^fix\\/.*$"
-      - "^chore\\/.*$"
-      - "^refactor\\/.*$"
+      - "^(feature|fix|chore|refactor)\\/.*$"
+      - "^.*$"
   protected_branches:
     - "main"
     - "master"
