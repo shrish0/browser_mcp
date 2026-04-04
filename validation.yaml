@@ -1,0 +1,46 @@
+version: "1.0"
+project:
+  name: "FastAPI Project"
+  language: "python"
+  framework: "fastapi"
+
+workflow_rules:
+  branch_naming:
+    enabled: true
+    patterns:
+      - "^feature\\/.*$"
+      - "^fix\\/.*$"
+      - "^chore\\/.*$"
+      - "^refactor\\/.*$"
+  protected_branches:
+    - "main"
+    - "master"
+  pr_requirements:
+    title: true
+    description: true
+
+lint_rules:
+  tool: "ruff"
+  fail_on: ["F401", "F821", "E9"]
+  warn_on: ["E501"]
+
+render_deployment:
+  required_files:
+    - "requirements.txt"
+    - "app/main.py"
+  entrypoint: "app/main.py"
+  fastapi_instance: "app = FastAPI()"
+
+security_rules:
+  secret_scan:
+    enabled: true
+    patterns:
+      - "sk-[a-zA-Z0-9]{20,}"
+      - "API_KEY\\s*=\\s*['\"].*['\"]"
+      - "SECRET_KEY\\s*=\\s*['\"].*['\"]"
+      - "PASSWORD\\s*=\\s*['\"].*['\"]"
+
+fastapi_rules:
+  modular_structure: true
+  pydantic_validation: true
+  async_safety: true

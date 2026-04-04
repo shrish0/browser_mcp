@@ -1,0 +1,118 @@
+name: PR Validation System
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 1. Workflow Rule Enforcement
+        run: |
+          echo "Checking branch naming..."
+          SOURCE_BRANCH="${{ github.head_ref }}"
+          if [[ "$SOURCE_BRANCH" == "main" || "$SOURCE_BRANCH" == "master" ]]; then
+            echo "::error::PRs from 'main' or 'master' are strictly prohibited."
+            exit 1
+          fi
+
+          PATTERN="^(feature|fix|chore|refactor)\/.*$"
+          if [[ ! "$SOURCE_BRANCH" =~ $PATTERN ]]; then
+            echo "::error::Invalid branch name: '$SOURCE_BRANCH'. Branch MUST follow: feature/, fix/, chore/, or refactor/"
+            exit 1
+          fi
+
+          echo "Checking PR content..."
+          if [[ -z "${{ github.event.pull_request.title }}" ]]; then
+            echo "::error::PR title is missing."
+            exit 1
+          fi
+          if [[ -z "${{ github.event.pull_request.body }}" ]]; then
+            echo "::error::PR description is missing."
+            exit 1
+          fi
+
+      - name: 2. Setup Python environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 3. Requirements and Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ruff fastapi pydantic uvicorn
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f app/requirements.txt ]; then pip install -r app/requirements.txt; fi
+
+      - name: 4. Ruff Linting (Strict Checks)
+        run: |
+          echo "Running Ruff checks..."
+          # Fail on critical errors
+          ruff check . --select F401,F821,E9 || exit 1
+          # Warn on line length (no exit 1)
+          ruff check . --select E501 || true
+
+      - name: 5. Render Deployment Readiness
+        run: |
+          echo "Validating project structure for Render..."
+          if [[ ! -f "requirements.txt" && ! -f "pyproject.toml" && ! -f "app/requirements.txt" ]]; then
+            echo "::error::Application is NOT deployable: requirements.txt or pyproject.toml is missing."
+            exit 1
+          fi
+
+          if [[ ! -f "app/main.py" && ! -f "main.py" && ! -f "app/app.py" && ! -f "app.py" ]]; then
+            echo "::error::Application entrypoint (main.py or app.py) NOT found."
+            exit 1
+          fi
+
+          echo "Checking for FastAPI app instance..."
+          grep -rn "app = FastAPI(" . || { echo "::error::FastAPI instance 'app = FastAPI()' not found."; exit 1; }
+
+      - name: 6. Security Analysis (Secret Scanning)
+        run: |
+          echo "Scanning for hardcoded secrets..."
+          # Check for sk- prefixed tokens (OpenAI etc), AWS keys, and generic SECRET_KEY assignments
+          GREP_FLAGS="-rniE"
+          PATTERNS="(sk-[a-zA-Z0-9]{20,}|SECRET_KEY\s*=\s*['\"].*['\"]|API_KEY\s*=\s*['\"].*['\"]|PASSWORD\s*=\s*['\"].*['\"])"
+          
+          # Exclude common false positives (tests, .env examples)
+          if grep $GREP_FLAGS "$PATTERNS" . --exclude-dir={.git,.venv,venv,tests} --exclude={example.env,.env.example,*.md}; then
+            echo "::error::Hardcoded Secrets Detected! Remove them immediately and use Environment Variables."
+            exit 1
+          fi
+
+      - name: 7. FastAPI Integrity & Response Models
+        run: |
+          echo "Validating FastAPI modular components..."
+          # Ensure all routes have Pydantic models (basic grep check for common patterns)
+          # This checks if def functions in routes define types for inputs or response_model
+          grep -rnE "def .*(.*):" app/ | grep -v "self" || echo "Note: Verify route input types manually."
+          
+          # Check for blocking calls in async routes (simple grep for time.sleep in async def)
+          if grep -rn "time.sleep" . | grep -B 1 "async def"; then
+            echo "::error::Blocking 'time.sleep' detected inside 'async def'. Use 'await asyncio.sleep()' instead."
+            exit 1
+          fi
+
+      - name: 8. Startup Check (Dry Run)
+        run: |
+          echo "Verifying application startup..."
+          # Attempt to import the app without running it (checks for syntax/import errors)
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          # Try to locate the main.py and import it
+          if [ -d "app" ]; then cd app; fi
+          python -c "from main import app; print('Startup Check: SUCCESS')" || { echo "::error::Application failed to initialize."; exit 1; }
