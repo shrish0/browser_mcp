@@ -37,9 +37,9 @@ prompts: Dict[str, Dict[str, PromptFunction]] = {
             + f"\n\nContext:\n{context}\n\n"
             "Return response in this EXACT JSON format:\n"
             "{\n"
-            "  \"answers\": [\n"
-            "    {\"question\": \"<question_1>\", \"answer\": \"...\"},\n"
-            "    {\"question\": \"<question_2>\", \"answer\": \"...\"}\n"
+            '  "answers": [\n'
+            '    {"question": "<question_1>", "answer": "..."},\n'
+            '    {"question": "<question_2>", "answer": "..."}\n'
             "  ]\n"
             "}"
         ),
@@ -59,9 +59,9 @@ prompts: Dict[str, Dict[str, PromptFunction]] = {
             + f"\n\nContext:\n{context}\n\n"
             "Return response in this EXACT JSON format:\n"
             "{\n"
-            "  \"answers\": [\n"
-            "    {\"question\": \"<question_1>\", \"answer\": \"...\"},\n"
-            "    {\"question\": \"<question_2>\", \"answer\": \"...\"}\n"
+            '  "answers": [\n'
+            '    {"question": "<question_1>", "answer": "..."},\n'
+            '    {"question": "<question_2>", "answer": "..."}\n'
             "  ]\n"
             "}"
         ),

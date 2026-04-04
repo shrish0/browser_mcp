@@ -126,7 +126,9 @@ def _parse_batch_response(response: Any, questions: List[str]) -> List[Dict[str,
         if not isinstance(item, dict):
             continue
         question_text = item.get("question")
-        answer_text = _safe_text(item.get("answer") if isinstance(item.get("answer"), str) else None)
+        answer_text = _safe_text(
+            item.get("answer") if isinstance(item.get("answer"), str) else None
+        )
         if isinstance(question_text, str):
             mapping[question_text] = answer_text
 
@@ -180,7 +182,9 @@ class AIClient:
     def _mark_failure(self, model: str) -> None:
         state = self.model_states.get(model)
         if state:
-            state.record_failure(self.CIRCUIT_BREAKER_THRESHOLD, self.CIRCUIT_BREAKER_RESET_SECONDS)
+            state.record_failure(
+                self.CIRCUIT_BREAKER_THRESHOLD, self.CIRCUIT_BREAKER_RESET_SECONDS
+            )
 
     def _call_model_batch(
         self,
@@ -220,12 +224,18 @@ class AIClient:
                 return result
             except Exception as exc:
                 last_exception = exc
-                logger.warning("Batch model %s attempt %d failed: %s", model, attempts, exc)
+                logger.warning(
+                    "Batch model %s attempt %d failed: %s", model, attempts, exc
+                )
                 if attempts > self.max_retries:
-                    logger.exception("Batch model %s failed after %d attempts", model, attempts)
+                    logger.exception(
+                        "Batch model %s failed after %d attempts", model, attempts
+                    )
                     self._mark_failure(model)
                 else:
-                    logger.info("Retrying batch model %s (attempt %d)", model, attempts + 1)
+                    logger.info(
+                        "Retrying batch model %s (attempt %d)", model, attempts + 1
+                    )
 
         logger.debug("Last batch exception for model %s: %s", model, last_exception)
         return None
@@ -249,7 +259,9 @@ class AIClient:
             if result is not None:
                 return result, model
 
-        fallback = [{"question": q, "answer": "Not found in context"} for q in questions]
+        fallback = [
+            {"question": q, "answer": "Not found in context"} for q in questions
+        ]
         return fallback, "none"
 
     def answer_questions(
@@ -266,7 +278,9 @@ class AIClient:
 
         for batch_index, batch in enumerate(batched, start=1):
             start_time = time.monotonic()
-            batch_result, model = self._call_model_batch_with_fallback(batch, context, max_tokens)
+            batch_result, model = self._call_model_batch_with_fallback(
+                batch, context, max_tokens
+            )
             elapsed = time.monotonic() - start_time
             logger.info(
                 "Processed batch %d/%d with %d questions on model %s in %.2f seconds",
@@ -303,4 +317,3 @@ def get_ai_client(model: Optional[str] = None) -> AIClient:
             request_timeout=settings.OPENROUTER_REQUEST_TIMEOUT,
         )
     return _clients[key]
-
