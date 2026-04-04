@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: browser-mcp
+    runtime: python3
+    pythonVersion: 3.11.9
+    buildCommand: "pip install -r requirements.txt && playwright install"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: OPENROUTER_API_KEY
+        sync: false  # Set in Render dashboard as secret
+      - key: OPENROUTER_API_BASE_URL
+        value: https://openrouter.ai/api/v1
+      - key: OPENROUTER_HTTP_REFERER
+        value: ""
+      - key: OPENROUTER_TITLE
+        value: Browser MCP
+      - key: OPENROUTER_REQUEST_TIMEOUT
+        value: 30
+      - key: APP_NAME
+        value: Browser MCP Server
+      - key: DEBUG
+        value: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: PRIMARY_MODEL
+        value: qwen/qwen3.6-plus:free
+      - key: FALLBACK_MODEL
+        value: openai/gpt-4o
+      - key: ENV
+        value: production
