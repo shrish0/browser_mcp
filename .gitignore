@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.vscode/
+.gemini/
+*.log
+debug_ai.py
+test_api.py
+test_ai_client.py
+test_ai_client_real.py
+implementation_plan.md
+task.md
