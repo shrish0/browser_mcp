@@ -29,17 +29,30 @@ class WebScraper:
         if not parsed.scheme or not parsed.netloc:
             raise ValueError(f"Invalid URL: {url}")
 
+    def _canonical_site_host(self, netloc: str) -> str:
+        """Map host to a site key so m./mobile./www. variants match (not l. link shims)."""
+        n = netloc.lower()
+        if n.startswith("www."):
+            n = n[4:]
+        for prefix in ("m.", "mobile.", "touch."):
+            if n.startswith(prefix):
+                rest = n[len(prefix) :]
+                if "." in rest:
+                    n = rest
+                break
+        return n
+
     def _urls_are_different(self, url1: str, url2: str) -> bool:
-        """Check if two URLs are fundamentally different (ignoring scheme, www, and trailing slashes)."""
+        """True if final URL is a different site or path (ignores scheme, www, common mobile hosts)."""
         parsed1 = urlparse(url1)
         parsed2 = urlparse(url2)
-        
-        netloc1 = parsed1.netloc.replace("www.", "").lower()
-        netloc2 = parsed2.netloc.replace("www.", "").lower()
-        
-        path1 = parsed1.path.rstrip('/')
-        path2 = parsed2.path.rstrip('/')
-        
+
+        netloc1 = self._canonical_site_host(parsed1.netloc)
+        netloc2 = self._canonical_site_host(parsed2.netloc)
+
+        path1 = parsed1.path.rstrip("/")
+        path2 = parsed2.path.rstrip("/")
+
         return netloc1 != netloc2 or path1 != path2
 
     def _is_login_url(self, url: str) -> bool:
@@ -58,8 +71,31 @@ class WebScraper:
                 "/register",
                 "/signup",
                 "/sign-up",
+                "/flx/warn",
             ]
         )
+
+    def _is_javascript_app_shell(self, soup: BeautifulSoup) -> bool:
+        """Detect HTML that only loads the real UI in JS (e.g. Render, many SPAs)."""
+        chunks: list[str] = []
+        for node in soup.find_all(string=True):
+            parent = getattr(node, "parent", None)
+            if parent and parent.name in ("script", "style"):
+                continue
+            piece = str(node).strip()
+            if piece:
+                chunks.append(piece)
+        text = " ".join(chunks).lower()
+        if not text:
+            return False
+        markers = (
+            "please enable javascript",
+            "please enable java script",
+            "javascript is required",
+            "you need to enable javascript",
+            "enable javascript to continue",
+        )
+        return any(m in text for m in markers)
 
     def scrape_static(self, url: str) -> Optional[Dict]:
         """Scrape webpage using static requests/BeautifulSoup."""
@@ -77,8 +113,27 @@ class WebScraper:
                 logger.info(
                     f"URL changed significantly from {url} to {response.url} - redirect detected"
                 )
+                final_lower = response.url.lower()
+                meta_hosts = (
+                    "facebook.com",
+                    "fb.com",
+                    "instagram.com",
+                    "messenger.com",
+                    "meta.com",
+                )
+                if self._is_login_url(response.url) and any(
+                    h in final_lower for h in meta_hosts
+                ):
+                    msg = (
+                        "Redirected to a login, mobile gate, or link warning page "
+                        "(typical for Facebook / Instagram mobile or l.facebook.com links)"
+                    )
+                elif self._is_login_url(response.url):
+                    msg = "Redirected to a login or authentication page"
+                else:
+                    msg = "Redirected to a different page (likely login or missing page)"
                 raise RedirectError(
-                    error_message="Redirected to a different page (likely login or missing page)",
+                    error_message=msg,
                     status_code=302,
                     details={"redirect_url": response.url, "source_url": url},
                 )
@@ -140,6 +195,20 @@ class WebScraper:
 
             soup = BeautifulSoup(response.text, "html.parser")
 
+            if self._is_javascript_app_shell(soup):
+                logger.info(
+                    "JavaScript-only app shell detected for %s (no server redirect)",
+                    url,
+                )
+                raise ScraperError(
+                    error_message=(
+                        "Page only exposes a JavaScript shell over HTTP; "
+                        "try use_dynamic or sign in if the site requires auth"
+                    ),
+                    status_code=401,
+                    details={"url": url, "final_url": response.url},
+                )
+
             # Remove scripts and styles
             for tag in soup(["script", "style"]):
                 tag.decompose()
@@ -164,6 +233,15 @@ class WebScraper:
                 "raw_html": response.text,
             }
 
+            # Check if login is required based on content
+            if requires_login(result):
+                logger.info(f"Login required for {url}")
+                raise LoginRequiredError(
+                    error_message="Login required to access this page",
+                    status_code=401,
+                    details={"url": url},
+                )
+
             # Heuristic: If no content at all (empty title, no headings, no paragraphs),
             # it's likely a JavaScript-rendered SPA that needs authentication or JS execution
             if (
@@ -176,14 +254,6 @@ class WebScraper:
                 # Removed 'if is_redirect' here so it properly fails and falls back to dynamic
                 raise ScraperError(
                     error_message="No readable content - likely JavaScript SPA or protected page",
-                    status_code=401,
-                    details={"url": url},
-                )
-
-            if requires_login(result) and is_redirect:
-                logger.info(f"Login required for {url}")
-                raise LoginRequiredError(
-                    error_message="Login required",
                     status_code=401,
                     details={"url": url},
                 )
@@ -215,13 +285,14 @@ class WebScraper:
             with sync_playwright() as p:
                 browser = p.chromium.launch()
                 page = browser.new_page()
-                page.goto(url, wait_until="networkidle", timeout=30000)
-                page.wait_for_timeout(2000)  # Additional wait for content loading
-                final_url = page.url
-                content = page.content()
-                browser.close()
+                try:
+                    page.goto(url, wait_until="load", timeout=45000)
+                    page.wait_for_timeout(3000)
+                    final_url = page.url
+                    content = page.content()
+                finally:
+                    browser.close()
 
-            final_url = page.url
             if self._urls_are_different(url, final_url):
                 logger.info(
                     f"URL changed significantly from {url} to {final_url} - redirect detected"
@@ -233,6 +304,19 @@ class WebScraper:
                 )
 
             soup = BeautifulSoup(content, "html.parser")
+
+            if self._is_javascript_app_shell(soup):
+                logger.info(
+                    "JavaScript-only app shell after dynamic load for %s", url
+                )
+                raise ScraperError(
+                    error_message=(
+                        "Page still shows only a JavaScript shell; "
+                        "it may require authentication or a longer wait"
+                    ),
+                    status_code=401,
+                    details={"url": url, "final_url": final_url},
+                )
 
             # Remove scripts and styles
             for tag in soup(["script", "style"]):
@@ -258,10 +342,11 @@ class WebScraper:
                 "raw_html": content,
             }
 
-            if requires_login(result) and final_url != url:
+            # Check if login is required based on content
+            if requires_login(result):
                 logger.info(f"Login required for {url}")
                 raise LoginRequiredError(
-                    error_message="Login required",
+                    error_message="Login required to access this page",
                     status_code=401,
                     details={"url": url},
                 )
