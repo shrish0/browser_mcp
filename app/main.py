@@ -1,12 +1,13 @@
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, HttpUrl
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from ai_client import get_ai_client
+from exceptions import ScraperError
 from scraper import WebScraper
+from schemas import BrowseRequest, BrowseResponse
 from setting import get_settings
 from utils import prepare_for_ai_summarization
 
@@ -28,22 +29,33 @@ web_scraper = WebScraper()
 ai_client = get_ai_client()
 
 
-class BrowseRequest(BaseModel):
-    url: HttpUrl
-    questions: Optional[List[str]] = None
-    use_dynamic: bool = False
+# Global exception handler
+@app.exception_handler(ScraperError)
+async def scraper_exception_handler(request: Request, exc: ScraperError):
+    """Handle scraper exceptions with statuscode and error_message."""
+    logger.warning("Scraper exception for %s: %s", request.url, exc.error_message)
+    return JSONResponse(
+        status_code=exc.status_code or 400,
+        content={
+            "statuscode": exc.status_code,
+            "error_message": exc.error_message,
+            "details": exc.details,
+        },
+    )
 
 
-class BrowseResponse(BaseModel):
-    url: str
-    title: Optional[str] = None
-    headings: Optional[List[str]] = None
-    paragraphs: Optional[List[str]] = None
-    metadata: Optional[Dict[str, str]] = None
-    ai_answers: Optional[Dict[str, str]] = None  # Mapping question -> answer
-    model_used: Optional[str] = None  # Primary model used for paragraphs
-    answer_models: Optional[Dict[str, str]] = None  # Mapping question -> model used
-    error: Optional[str] = None
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle all other exceptions globally and return error details."""
+    logger.exception(f"Unhandled exception: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "statuscode": 500,
+            "error_message": "Internal server error",
+            "details": {"reason": type(exc).__name__},
+        },
+    )
 
 
 @app.get("/health")
@@ -61,100 +73,81 @@ def root_redirect():
 @app.post("/browse", response_model=BrowseResponse)
 def browse_webpage(request: BrowseRequest):
     """Browse a webpage and extract structured content."""
-    try:
-        logger.info(f"Step 1: Scraping webpage - {request.url}")
-        result = web_scraper.scrape(str(request.url), request.use_dynamic)
+    logger.info(f"Step 1: Scraping webpage - {request.url}")
+    result = web_scraper.scrape(str(request.url), request.use_dynamic)
 
-        if result is None:
-            logger.error(f"Failed to scrape {request.url}")
-            raise HTTPException(status_code=500, detail="Failed to scrape webpage")
-
-        if isinstance(result, dict) and result.get("requires_login"):
-            return BrowseResponse(
-                url=str(request.url),
-                error="This site requires login so can't summarize it",
-            )
-
-        response_data = {
-            "url": str(request.url),
-            "title": result["title"],
-            "headings": result["headings"],
-            "paragraphs": result["paragraphs"],
-            "metadata": result["metadata"],
-        }
-
-        # Summarize paragraphs if possible, else use raw paragraphs
-        logger.info("Step 2: Preparing context for AI summarization")
-        prepared_context = prepare_for_ai_summarization(result)
-        logger.debug(
-            "Step 2: Prepared context for AI summarization (length=%d chars, headings=%d, paragraphs=%d)",
-            len(prepared_context),
-            len(result.get("headings", [])) if isinstance(result, dict) else 0,
-            len(result.get("paragraphs", [])) if isinstance(result, dict) else 0,
+    if result is None:
+        logger.error(f"Failed to scrape {request.url}")
+        raise ScraperError(
+            error_message="Failed to scrape webpage",
+            status_code=502,
+            details={"url": str(request.url)},
         )
-        try:
-            if ai_client is None:
-                logger.warning("AI client not available, using raw paragraphs")
-                response_data["paragraphs"] = result["paragraphs"]
-            else:
-                logger.info("Step 3: Generating AI summary for paragraphs")
-                summary_data = ai_client.get_summary(
-                    question="Summarize the main content of this webpage concisely.",
-                    context=prepared_context,
-                    max_tokens=300,
-                    return_model=True,  # We need a way to get the model used
-                )
-                if isinstance(summary_data, tuple):
-                    summary, model = summary_data
-                else:
-                    summary, model = summary_data, None
 
-                if summary and summary != "AI summarization failed":
-                    response_data["paragraphs"] = [summary]
-                    response_data["model_used"] = model
-                    logger.info(
-                        "Successfully summarized paragraphs with AI using %s", model
-                    )
-                else:
-                    response_data["paragraphs"] = result["paragraphs"]
-                    logger.warning("AI summary failed, using raw paragraphs")
-        except Exception:
-            logger.exception(
-                "AI paragraph summarization failed, falling back to raw paragraphs"
-            )
+    response_data = {
+        "url": str(request.url),
+        "title": result["title"],
+        "headings": result["headings"],
+        "paragraphs": result["paragraphs"],
+        "metadata": result["metadata"],
+    }
+
+    # Summarize paragraphs if possible
+    logger.info("Step 2: Preparing context for AI summarization")
+    prepared_context = prepare_for_ai_summarization(result)
+    try:
+        if ai_client is None:
+            logger.warning("AI client not available, using raw paragraphs")
             response_data["paragraphs"] = result["paragraphs"]
-
-        # Handle specific questions if provided
-        if request.questions:
-            if ai_client is None:
-                logger.warning("AI client not available, cannot answer questions")
-                raise HTTPException(
-                    status_code=400,
-                    detail="AI features require OPENROUTER_API_KEY to be set in environment",
-                )
-            logger.info(
-                f"Step 4: Answering {len(request.questions)} specific questions"
+        else:
+            logger.info("Step 3: Generating AI summary for paragraphs")
+            summary_data = ai_client.get_summary(
+                question="Summarize the main content of this webpage concisely.",
+                context=prepared_context,
+                max_tokens=300,
+                return_model=True,
             )
-            response_data["ai_answers"] = {}
-            response_data["answer_models"] = {}
-            answers, model_map = ai_client.answer_questions(
-                request.questions,
-                prepared_context,
-                max_tokens=500,
-                batch_size=10,
-                delay_seconds=0.3,
-            )
-            for entry in answers:
-                response_data["ai_answers"][entry["question"]] = entry["answer"]
-                response_data["answer_models"][entry["question"]] = model_map.get(
-                    entry["question"], "none"
+            if isinstance(summary_data, tuple):
+                summary, model = summary_data
+            else:
+                summary, model = summary_data, None
+
+            if summary and summary != "AI summarization failed":
+                response_data["paragraphs"] = [summary]
+                response_data["model_used"] = model
+                logger.info(
+                    "Successfully summarized paragraphs with AI using %s", model
                 )
+            else:
+                response_data["paragraphs"] = result["paragraphs"]
+                logger.warning("AI summary failed, using raw paragraphs")
+    except Exception:
+        logger.exception(
+            "AI paragraph summarization failed, falling back to raw paragraphs"
+        )
+        response_data["paragraphs"] = result["paragraphs"]
 
-        return BrowseResponse(**response_data)
+    # Handle specific questions if provided
+    if request.questions:
+        if ai_client is None:
+            raise ValueError(
+                "AI features require OPENROUTER_API_KEY to be set in environment"
+            )
 
-    except ValueError as e:
-        logger.warning(f"Invalid URL: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.info(f"FLOW FAILED: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.info(f"Step 4: Answering {len(request.questions)} specific questions")
+        response_data["ai_answers"] = {}
+        response_data["answer_models"] = {}
+        answers, model_map = ai_client.answer_questions(
+            request.questions,
+            prepared_context,
+            max_tokens=500,
+            batch_size=10,
+            delay_seconds=0.3,
+        )
+        for entry in answers:
+            response_data["ai_answers"][entry["question"]] = entry["answer"]
+            response_data["answer_models"][entry["question"]] = model_map.get(
+                entry["question"], "none"
+            )
+
+    return BrowseResponse(**response_data)
