@@ -29,6 +29,19 @@ class WebScraper:
         if not parsed.scheme or not parsed.netloc:
             raise ValueError(f"Invalid URL: {url}")
 
+    def _urls_are_different(self, url1: str, url2: str) -> bool:
+        """Check if two URLs are fundamentally different (ignoring scheme, www, and trailing slashes)."""
+        parsed1 = urlparse(url1)
+        parsed2 = urlparse(url2)
+        
+        netloc1 = parsed1.netloc.replace("www.", "").lower()
+        netloc2 = parsed2.netloc.replace("www.", "").lower()
+        
+        path1 = parsed1.path.rstrip('/')
+        path2 = parsed2.path.rstrip('/')
+        
+        return netloc1 != netloc2 or path1 != path2
+
     def _is_login_url(self, url: str) -> bool:
         """Detect common login/auth URL paths."""
         lower_url = url.lower()
@@ -42,6 +55,9 @@ class WebScraper:
                 "/authenticate",
                 "/oauth",
                 "/session",
+                "/register",
+                "/signup",
+                "/sign-up",
             ]
         )
 
@@ -55,19 +71,15 @@ class WebScraper:
             )
 
             # Check if URL changed (redirect occurred)
-            is_redirect = response.url != url
-            if is_redirect and self._is_login_url(response.url):
+            # If the URL changed significantly, we raise an exception to prevent AI from operating on wrong page
+            is_redirect = self._urls_are_different(url, response.url)
+            if is_redirect:
                 logger.info(
-                    f"URL changed from {url} to {response.url} - redirect detected (likely login)"
+                    f"URL changed significantly from {url} to {response.url} - redirect detected"
                 )
                 raise RedirectError(
-                    error_message="Redirected to a login or authentication page",
-                    status_code=response.status_code,
-                    details={"redirect_url": response.url, "source_url": url},
-                )
-                raise RedirectError(
-                    error_message="Redirected to a login or authentication page",
-                    status_code=response.status_code,
+                    error_message="Redirected to a different page (likely login or missing page)",
+                    status_code=302,
                     details={"redirect_url": response.url, "source_url": url},
                 )
 
@@ -102,13 +114,11 @@ class WebScraper:
                 )
             elif response.status_code == 404:
                 logger.warning(f"Not found (404) for {url}")
-                if is_redirect:
-                    raise NotFoundError(
-                        error_message="Page not found",
-                        status_code=404,
-                        details={"url": url, "redirect_url": response.url},
-                    )
-                # If the requested URL itself is a 404 page, return it for inspection.
+                raise NotFoundError(
+                    error_message="Page not found",
+                    status_code=404,
+                    details={"url": url, "redirect_url": response.url if is_redirect else None},
+                )
             elif response.status_code >= 400:
                 logger.warning(f"HTTP error {response.status_code} for {url}")
                 raise ScraperError(
@@ -117,7 +127,7 @@ class WebScraper:
                     details={"url": url},
                 )
 
-            if not (response.status_code == 404 and not is_redirect):
+            if response.status_code != 404: # Already handled
                 response.raise_for_status()
 
             if "text/html" not in response.headers.get("content-type", "").lower():
@@ -209,12 +219,13 @@ class WebScraper:
                 content = page.content()
                 browser.close()
 
-            if final_url != url and self._is_login_url(final_url):
+            final_url = page.url
+            if self._urls_are_different(url, final_url):
                 logger.info(
-                    f"URL changed from {url} to {final_url} - redirect detected (likely login)"
+                    f"URL changed significantly from {url} to {final_url} - redirect detected"
                 )
                 raise RedirectError(
-                    error_message="Redirected to a login or authentication page",
+                    error_message="Redirected to a different page (likely login or missing page)",
                     status_code=302,
                     details={"redirect_url": final_url, "source_url": url},
                 )
