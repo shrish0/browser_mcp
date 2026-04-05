@@ -1,5 +1,5 @@
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List
 from bs4 import BeautifulSoup
 
 
@@ -59,7 +59,9 @@ def _normalize_text(text: str) -> str:
     return clean_text(text)
 
 
-def extract_interactive_elements(soup: BeautifulSoup) -> Dict[str, List[Dict[str, str]]]:
+def extract_interactive_elements(
+    soup: BeautifulSoup,
+) -> Dict[str, List[Dict[str, str]]]:
     """Extract input fields, buttons, and links for AI context."""
     interactive = {
         "inputs": [],

@@ -34,7 +34,15 @@ class WebScraper:
         lower_url = url.lower()
         return any(
             term in lower_url
-            for term in ["/login", "/signin", "/sign-in", "/auth", "/authenticate", "/oauth", "/session"]
+            for term in [
+                "/login",
+                "/signin",
+                "/sign-in",
+                "/auth",
+                "/authenticate",
+                "/oauth",
+                "/session",
+            ]
         )
 
     def scrape_static(self, url: str) -> Optional[Dict]:
