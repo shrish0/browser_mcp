@@ -20,3 +20,4 @@ pydantic-settings==2.5.0
 # --- AI Integration ---
 # Integration with Large Language Models for summarization and QA
 openai==1.0.0
+httpx==0.24.1
