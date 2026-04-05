@@ -304,7 +304,9 @@ class AIClient:
                 last_exception = exc
                 logger.warning("Model %s attempt %d failed: %s", model, attempts, exc)
                 if attempts > self.max_retries:
-                    logger.exception("Model %s failed after %d attempts", model, attempts)
+                    logger.exception(
+                        "Model %s failed after %d attempts", model, attempts
+                    )
                     self._mark_failure(model)
                 else:
                     logger.info("Retrying model %s (attempt %d)", model, attempts + 1)

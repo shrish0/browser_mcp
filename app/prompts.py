@@ -19,6 +19,8 @@ prompts: Dict[str, Dict[str, PromptFunction]] = {
         ),
         "user": lambda question, context: (
             "Please answer the following question based on the context provided.\n\n"
+            "Context may include interactive elements such as input fields, buttons, and links. "
+            "Use those details when the question relates to login, forms, or page actions.\n\n"
             f"Question: {question}\n\nContext:\n{context}"
         ),
     },
@@ -30,6 +32,8 @@ prompts: Dict[str, Dict[str, PromptFunction]] = {
         ),
         "user": lambda questions, context: (
             "Answer the following questions based ONLY on the given context.\n\n"
+            "Context may include interactive elements such as input fields, buttons, and links. "
+            "Use those details when relevant.\n\n"
             "Questions:\n"
             + "\n".join(
                 f"{index + 1}. {question}" for index, question in enumerate(questions)
@@ -52,6 +56,8 @@ prompts: Dict[str, Dict[str, PromptFunction]] = {
         ),
         "user": lambda questions, context: (
             "Answer the following questions based ONLY on the given context.\n\n"
+            "Context may include interactive elements such as input fields, buttons, and links. "
+            "Use those details when relevant.\n\n"
             "Questions:\n"
             + "\n".join(
                 f"{index + 1}. {question}" for index, question in enumerate(questions)
