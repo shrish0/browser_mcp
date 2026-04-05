@@ -165,20 +165,20 @@ class WebScraper:
             }
 
             # Heuristic: If no content at all (empty title, no headings, no paragraphs),
-            # it's likely a JavaScript-rendered SPA that needs authentication
+            # it's likely a JavaScript-rendered SPA that needs authentication or JS execution
             if (
                 not title
                 and not headings
                 and not paragraphs
                 and not metadata.get("description")
             ):
-                logger.info(f"No readable content for {url} - likely protected SPA")
-                if is_redirect:
-                    raise LoginRequiredError(
-                        error_message="No readable content - likely protected or login-required page",
-                        status_code=401,
-                        details={"url": url},
-                    )
+                logger.info(f"No readable content for {url} - likely protected SPA or requires JS")
+                # Removed 'if is_redirect' here so it properly fails and falls back to dynamic
+                raise ScraperError(
+                    error_message="No readable content - likely JavaScript SPA or protected page",
+                    status_code=401,
+                    details={"url": url},
+                )
 
             if requires_login(result) and is_redirect:
                 logger.info(f"Login required for {url}")
@@ -191,6 +191,8 @@ class WebScraper:
             logger.info(f"Static scrape successful for {url}")
             return result
 
+        except ScraperError:
+            raise
         except requests.RequestException as e:
             logger.exception("Static scrape failed for %s: %s", url, e)
             raise ScraperError(
@@ -267,6 +269,8 @@ class WebScraper:
             logger.info(f"Dynamic scrape successful for {url}")
             return result
 
+        except ScraperError:
+            raise
         except Exception as exc:
             logger.exception("Dynamic scrape failed for %s", url)
             raise ScraperError(
@@ -276,21 +280,12 @@ class WebScraper:
             )
 
     def scrape(self, url: str, use_dynamic: bool = False) -> Optional[Dict]:
-        """Scrape webpage, trying static first, fallback to dynamic if enabled."""
+        """Scrape webpage. Uses dynamic scraping if requested, otherwise tries static."""
         self._validate_url(url)
 
-        # Try static scraping first
-        result = self.scrape_static(url)
-        if result is not None:
-            return result
-
-        # If static failed and dynamic is enabled, try dynamic
         if use_dynamic:
-            logger.info(f"Static scrape failed, trying dynamic for {url}")
+            logger.info(f"Dynamic scraping requested for {url}")
             return self.scrape_dynamic(url)
 
-        raise ScraperError(
-            error_message="Unable to scrape webpage",
-            status_code=502,
-            details={"url": url},
-        )
+        # Try static scraping
+        return self.scrape_static(url)
